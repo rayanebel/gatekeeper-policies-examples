@@ -1,0 +1,44 @@
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredipfiltering
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredIPFiltering
+  targets:
+  - rego: |
+      package k8srequiredipfiltering
+
+      service_has_annotation_block {
+          input.review.object.metadata.annotations
+      }
+
+      find_annotation(annotations, annotation) = res {
+          annotations[annotation]
+          res = annotations[annotation]
+      }
+
+      allow_no_ip_filtering_annotation_key = "security.k8s.io/allow-no-ip-filtering"
+
+      service_has_ip_filtering {
+          input.review.object.spec.loadBalancerSourceRanges
+          count(input.review.object.spec.loadBalancerSourceRanges) > 0
+      }
+
+      service_has_bypass_annotation {
+        service_has_annotation_block
+        find_annotation(input.review.object.metadata.annotations, allow_no_ip_filtering_annotation_key) == "true"
+      }
+
+      violation[{"msg": msg, "details": {}}] {
+          input.review.kind.kind == "Service"
+          input.review.object.spec.type == "LoadBalancer"
+          not service_has_bypass_annotation
+          not service_has_ip_filtering
+          msg := sprintf("Rejecting service %v of type %v : 'spec.loadBalancerSourceRanges' properties must be set", [
+              input.review.object.metadata.name,
+              input.review.object.spec.type])
+      }
+    target: admission.k8s.gatekeeper.sh
